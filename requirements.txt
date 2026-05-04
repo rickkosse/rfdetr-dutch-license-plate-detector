@@ -1,0 +1,5 @@
+onnxruntime
+fast-plate-ocr
+opencv-python
+numpy
+huggingface_hub
