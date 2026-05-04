@@ -24,7 +24,7 @@ import numpy as np
 # Config
 # ---------------------------------------------------------------------------
 
-HF_REPO_ID   = "Rickkosse/rfdetr-flitsfoto-detector"
+HF_REPO_ID   = "Rickkosse/rfdetr_licences_plate_detector"
 ONNX_FILE    = "inference_model.onnx"
 MODEL_CACHE  = Path.home() / ".cache" / "dutch-plate-detector"
 INPUT_SIZE   = 560

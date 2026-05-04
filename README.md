@@ -69,7 +69,7 @@ Supported plate formats: sidecodes 1–10, agricultural (sidecode 11), diplomati
 
 ## Model
 
-Hosted on HuggingFace: [Rickkosse/rfdetr-flitsfoto-detector](https://huggingface.co/Rickkosse/rfdetr-flitsfoto-detector)
+Hosted on HuggingFace: [Rickkosse/rfdetr_licences_plate_detector](https://huggingface.co/Rickkosse/rfdetr_licences_plate_detector)
 
 - Architecture: RF-DETR Base, 1 class (`license_plate`)
 - Resolution: 560×560
