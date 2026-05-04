@@ -98,14 +98,32 @@ def preprocess(img_bgr: np.ndarray) -> np.ndarray:
     return img.transpose(2, 0, 1)[np.newaxis]  # NCHW
 
 
-def detect(session, img_bgr: np.ndarray, confidence: float) -> list[dict]:
+def detect(session, img_bgr: np.ndarray, confidence: float,
+           debug: bool = False) -> list[dict]:
     oh, ow = img_bgr.shape[:2]
     inp = preprocess(img_bgr)
+    output_names = [o.name for o in session.get_outputs()]
     outputs = session.run(None, {session.get_inputs()[0].name: inp})
 
+    if debug:
+        print(f"  [debug] outputs: {output_names}")
+        for name, arr in zip(output_names, outputs):
+            print(f"  [debug] {name}: shape={arr.shape}  "
+                  f"min={arr.min():.3f}  max={arr.max():.3f}")
+
     dets   = outputs[0].squeeze()   # (300, 4) normalized xyxy
-    logits = outputs[1].squeeze()   # (300, 2) raw logits
-    scores = 1.0 / (1.0 + np.exp(-np.atleast_2d(logits)[:, -1]))
+    logits = np.atleast_2d(outputs[1].squeeze())   # (300, 2) raw logits
+
+    # Automatisch de plate-klasse kolom kiezen (hoogste max-score)
+    s0 = 1.0 / (1.0 + np.exp(-logits[:, 0]))
+    s1 = 1.0 / (1.0 + np.exp(-logits[:, 1]))
+    scores = s0 if s0.max() > s1.max() else s1
+
+    if debug:
+        print(f"  [debug] col0 max={s0.max():.3f}  col1 max={s1.max():.3f}  "
+              f"→ using col{'0' if s0.max() > s1.max() else '1'}")
+        top5 = np.argsort(scores)[::-1][:5]
+        print(f"  [debug] top-5 scores: {scores[top5].round(3)}")
 
     results = []
     for i in np.where(scores > confidence)[0]:
@@ -197,12 +215,14 @@ def main():
                         help="Image file or folder")
     parser.add_argument("--output",       default="./output",
                         help="Output folder (default: ./output)")
-    parser.add_argument("--confidence",   type=float, default=0.3,
+    parser.add_argument("--confidence",   type=float, default=0.01,
                         help="Detection confidence threshold (default: 0.3)")
     parser.add_argument("--no-visualize", action="store_true",
                         help="Skip saving annotated images")
     parser.add_argument("--model",        default=None,
                         help="Path to local ONNX model (skips HF download)")
+    parser.add_argument("--debug",        action="store_true",
+                        help="Print raw model output shapes and top scores")
     args = parser.parse_args()
 
     output_dir = Path(args.output)
@@ -229,7 +249,7 @@ def main():
             print(f"  [skip] {img_path.name} — could not read")
             continue
 
-        detections = detect(session, img, args.confidence)
+        detections = detect(session, img, args.confidence, debug=args.debug)
 
         for det in detections:
             det["plate"] = read_plate(ocr, img, det["bbox"])
