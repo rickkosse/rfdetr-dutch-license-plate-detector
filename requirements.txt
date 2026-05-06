@@ -1,5 +1,7 @@
 onnxruntime
 fast-plate-ocr
+ultralytics
+rfdetr
 opencv-python
 numpy
 huggingface_hub

@@ -44,7 +44,9 @@ _NL_PLATE_RE = re.compile(
     r'|^[A-Z]\d{3}[A-Z]{2}$'     # sidecode 8:  X-999-XX
     r'|^[A-Z]{3}\d{2}[A-Z]$'     # sidecode 9:  XXX-99-X
     r'|^[A-Z]\d{2}[A-Z]{3}$'     # sidecode 10: X-99-XXX
-    r'|^[A-Z]{2}\d{2}[A-Z]{3}$'  # sidecode 11: XX-99-XXX (agricultural)
+    r'|^\d{2}[A-Z]{3}\d$'        # sidecode 12: 99-XXX-9
+    r'|^\d[A-Z]{3}\d{2}$'        # sidecode 13: 9-XXX-99
+    r'|^[A-Z]{2}\d{2}[A-Z]{3}$'  # sidecode 14: XX-99-XXX (agricultural)
     r'|^CD\d{1,4}$'              # Diplomatic
     r'|^\d{2}[A-Z]{2}\d$'        # Moped
     r'|^[A-Z]\d{2}[A-Z]{2}$',    # Light moped
@@ -121,17 +123,34 @@ def detect(session, img_bgr: np.ndarray, confidence: float,
 
     if debug:
         print(f"  [debug] col0 max={s0.max():.3f}  col1 max={s1.max():.3f}  "
-              f"→ using col{'0' if s0.max() > s1.max() else '1'}")
+              f"-> using col{'0' if s0.max() > s1.max() else '1'}")
         top5 = np.argsort(scores)[::-1][:5]
         print(f"  [debug] top-5 scores: {scores[top5].round(3)}")
 
     results = []
     for i in np.where(scores > confidence)[0]:
-        x1, y1, x2, y2 = dets[i]
-        x1, y1, x2, y2 = int(x1*ow), int(y1*oh), int(x2*ow), int(y2*oh)
+        cx, cy, bw, bh = dets[i]   # cxcywh genormaliseerd
+        x1 = int((cx - bw / 2) * ow)
+        y1 = int((cy - bh / 2) * oh)
+        x2 = int((cx + bw / 2) * ow)
+        y2 = int((cy + bh / 2) * oh)
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(ow, x2), min(oh, y2)
         w, h = x2 - x1, y2 - y1
+
+        if debug:
+            ratio = w / h if h > 0 else 0
+            area_frac = (w * h) / (ow * oh)
+            reason = ""
+            if h <= 0 or not (1.5 <= ratio <= 9.0):
+                reason = f"ratio={ratio:.1f} buiten [1.5-9.0]"
+            elif area_frac > 0.15:
+                reason = f"area={area_frac:.3f} > 0.15"
+            elif w < 20 or h < 8:
+                reason = f"te klein ({w}x{h})"
+            print(f"  [bbox] score={scores[i]:.3f} ({x1},{y1},{w}x{h}) "
+                  f"ratio={ratio:.1f} area={area_frac:.3f}"
+                  + (f" -> GEFILTERD: {reason}" if reason else " -> OK"))
 
         if h <= 0 or not (1.5 <= w / h <= 9.0):
             continue
@@ -158,7 +177,8 @@ def load_ocr():
     return LicensePlateRecognizer("european-plates-mobile-vit-v2-model")
 
 
-def read_plate(ocr, img_bgr: np.ndarray, bbox: list) -> str:
+def read_plate(ocr, img_bgr: np.ndarray, bbox: list,
+               debug: bool = False) -> str:
     x, y, w, h = bbox
     ih, iw = img_bgr.shape[:2]
     x1, y1 = max(0, x), max(0, y)
@@ -169,9 +189,15 @@ def read_plate(ocr, img_bgr: np.ndarray, bbox: list) -> str:
     crop_gray = crop_gray[:, :, np.newaxis]
     result = ocr.run(crop_gray)
     if not (result and result[0].plate):
+        if debug:
+            print(f"  [ocr] bbox=({x},{y},{w}x{h}) -> geen resultaat van OCR")
         return ""
     text = result[0].plate.strip()
     normalized = re.sub(r'[\-\s]', '', text).upper()
+    if debug:
+        match = bool(_NL_PLATE_RE.match(normalized))
+        print(f"  [ocr] bbox=({x},{y},{w}x{h}) -> '{text}' "
+              f"(norm='{normalized}') -> {'OK' if match else 'GEEN NL-formaat'}")
     return text if _NL_PLATE_RE.match(normalized) else ""
 
 
@@ -205,8 +231,16 @@ def draw_results(img: np.ndarray, detections: list, filename: str) -> np.ndarray
 def collect_images(path: Path) -> list[Path]:
     if path.is_file():
         return [path]
-    exts = {"*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"}
-    return sorted(p for ext in exts for p in path.glob(ext))
+    exts = {"*.jpg", "*.jpeg", "*.png"}
+    seen = set()
+    result = []
+    for ext in exts:
+        for p in path.glob(ext):
+            key = p.resolve()
+            if key not in seen:
+                seen.add(key)
+                result.append(p)
+    return sorted(result)
 
 
 def main():
@@ -252,7 +286,7 @@ def main():
         detections = detect(session, img, args.confidence, debug=args.debug)
 
         for det in detections:
-            det["plate"] = read_plate(ocr, img, det["bbox"])
+            det["plate"] = read_plate(ocr, img, det["bbox"], debug=args.debug)
 
         # Remove detections where OCR found no valid plate
         detections = [d for d in detections if d["plate"]]
@@ -260,7 +294,7 @@ def main():
         n = len(detections)
         if n:
             plates = ", ".join(d["plate"] for d in detections)
-            print(f"  ✓  {img_path.name}: {plates}")
+            print(f"  +  {img_path.name}: {plates}")
         else:
             print(f"  -  {img_path.name}: no plates found")
 
@@ -277,7 +311,7 @@ def main():
     elapsed = time.time() - t0
     n_found = sum(1 for r in all_results if r["detections"])
 
-    print(f"\n{'─'*45}")
+    print(f"\n{'-'*45}")
     print(f"Processed : {len(all_results)} images in {elapsed:.1f}s")
     print(f"With plate: {n_found}  ({n_found / max(len(all_results), 1) * 100:.0f}%)")
     print(f"Avg speed : {elapsed / max(len(all_results), 1) * 1000:.0f} ms/image")

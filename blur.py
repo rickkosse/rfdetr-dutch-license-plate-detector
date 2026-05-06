@@ -39,6 +39,12 @@ ONNX_FILE    = "inference_model.onnx"
 MODEL_CACHE  = Path.home() / ".cache" / "dutch-plate-detector"
 INPUT_SIZE   = 560
 
+FACE_PROTOTXT_URL   = ("https://raw.githubusercontent.com/opencv/opencv/4.x"
+                        "/samples/dnn/face_detector/deploy.prototxt")
+FACE_MODEL_URL      = ("https://github.com/opencv/opencv_3rdparty/raw/"
+                        "dnn_samples_face_detector_20170830/"
+                        "res10_300x300_ssd_iter_140000.caffemodel")
+
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
@@ -48,21 +54,22 @@ VEHICLE_CLS = {1, 2, 3, 5, 7}   # bicycle, car, motorcycle, bus, truck
 
 # Dutch license plate sidecodes (without dashes)
 _NL_PLATE_RE = re.compile(
-    r'^[A-Z]{2}\d{2}[A-Z]{2}$'
-    r'^[A-Z]{2}\d{3}[A-Z]{1}$'
-    r'|^\d{2}[A-Z]{2}\d{2}$'
-    r'|^[A-Z]{4}\d{2}$'
-    r'|^\d{4}[A-Z]{2}$'
-    r'|^\d{2}[A-Z]{4}$'
-    r'|^[A-Z]{2}\d{4}$'
-    r'|^[A-Z]{2}\d{3}[A-Z]$'
-    r'|^[A-Z]\d{3}[A-Z]{2}$'
-    r'|^[A-Z]{3}\d{2}[A-Z]$'
-    r'|^[A-Z]\d{2}[A-Z]{3}$'
-    r'|^[A-Z]{2}\d{2}[A-Z]{3}$'
-    r'|^CD\d{1,4}$'
-    r'|^\d{2}[A-Z]{2}\d$'
-    r'|^[A-Z]\d{2}[A-Z]{2}$',
+    r'^[A-Z]{2}\d{2}[A-Z]{2}$'   # sidecode 1:  XX-99-XX
+    r'|^\d{2}[A-Z]{2}\d{2}$'     # sidecode 2:  99-XX-99
+    r'|^[A-Z]{4}\d{2}$'          # sidecode 3:  XX-XX-99
+    r'|^\d{4}[A-Z]{2}$'          # sidecode 4:  99-99-XX
+    r'|^\d{2}[A-Z]{4}$'          # sidecode 5:  99-XX-XX
+    r'|^[A-Z]{2}\d{4}$'          # sidecode 6:  XX-99-99
+    r'|^[A-Z]{2}\d{3}[A-Z]$'     # sidecode 7:  XX-999-X
+    r'|^[A-Z]\d{3}[A-Z]{2}$'     # sidecode 8:  X-999-XX
+    r'|^[A-Z]{3}\d{2}[A-Z]$'     # sidecode 9:  XXX-99-X
+    r'|^[A-Z]\d{2}[A-Z]{3}$'     # sidecode 10: X-99-XXX
+    r'|^\d{2}[A-Z]{3}\d$'        # sidecode 12: 99-XXX-9
+    r'|^\d[A-Z]{3}\d{2}$'        # sidecode 13: 9-XXX-99
+    r'|^[A-Z]{2}\d{2}[A-Z]{3}$'  # sidecode 14: XX-99-XXX (agricultural)
+    r'|^CD\d{1,4}$'              # Diplomatic
+    r'|^\d{2}[A-Z]{2}\d$'        # Moped
+    r'|^[A-Z]\d{2}[A-Z]{2}$',    # Light moped
     re.IGNORECASE,
 )
 
@@ -119,6 +126,23 @@ def load_ocr():
     return ocr
 
 
+def load_face_detector():
+    import urllib.request
+    face_cache = MODEL_CACHE / "face_detector"
+    face_cache.mkdir(parents=True, exist_ok=True)
+    prototxt   = face_cache / "deploy.prototxt"
+    caffemodel = face_cache / "res10_300x300.caffemodel"
+    if not prototxt.exists():
+        print("Downloading face detector config...")
+        urllib.request.urlretrieve(FACE_PROTOTXT_URL, prototxt)
+    if not caffemodel.exists():
+        print("Downloading face detector model (~10 MB)...")
+        urllib.request.urlretrieve(FACE_MODEL_URL, caffemodel)
+    net = cv2.dnn.readNetFromCaffe(str(prototxt), str(caffemodel))
+    print("Face fallback: OpenCV DNN SSD ResNet10")
+    return net
+
+
 # ---------------------------------------------------------------------------
 # Detection helpers
 # ---------------------------------------------------------------------------
@@ -144,8 +168,11 @@ def detect_plates(session, img_bgr: np.ndarray,
 
     results = []
     for i in np.where(scores > confidence)[0]:
-        x1, y1, x2, y2 = dets[i]
-        x1, y1, x2, y2 = int(x1*ow), int(y1*oh), int(x2*ow), int(y2*oh)
+        cx, cy, bw, bh = dets[i]   # cxcywh genormaliseerd
+        x1 = int((cx - bw / 2) * ow)
+        y1 = int((cy - bh / 2) * oh)
+        x2 = int((cx + bw / 2) * ow)
+        y2 = int((cy + bh / 2) * oh)
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(ow, x2), min(oh, y2)
         w, h = x2 - x1, y2 - y1
@@ -189,7 +216,8 @@ def detect_persons_vehicles_yolo(yolo, img_bgr: np.ndarray,
 
 
 def detect_persons_vehicles_rfdetr(model, img_bgr: np.ndarray,
-                                    confidence: float = 0.4) -> tuple[list, list]:
+                                    confidence: float = 0.4,
+                                    debug: bool = False) -> tuple[list, list]:
     import PIL.Image
     import warnings
     pil_img = PIL.Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
@@ -212,21 +240,118 @@ def detect_persons_vehicles_rfdetr(model, img_bgr: np.ndarray,
             else results.labels[i] if hasattr(results, "labels")
             else -1
         )
+        # RF-DETR may return 1-indexed COCO IDs — normalise to 0-indexed
+        cls0 = cls - 1 if cls >= 1 else cls
+
+        if debug:
+            label = getattr(results, "class_names", {}).get(cls, f"cls{cls}")
+            print(f"    [rfdetr-raw] cls={cls} (0idx={cls0}) conf={conf:.2f} "
+                  f"label={label} bbox=[{x1},{y1},{x2-x1},{y2-y1}]")
+
         entry = {"bbox": [int(x1), int(y1), int(x2-x1), int(y2-y1)],
                  "confidence": round(conf, 3)}
-        if cls in PERSON_CLS:
+        # Try 0-indexed first, fall back to 1-indexed if nothing matches
+        if cls0 in PERSON_CLS or cls in PERSON_CLS:
             persons.append(entry)
-        elif cls in VEHICLE_CLS:
+        elif cls0 in VEHICLE_CLS or cls in VEHICLE_CLS:
             vehicles.append(entry)
 
     return persons, vehicles
 
 
 def detect_persons_vehicles(detector, img_bgr: np.ndarray,
-                             confidence: float, use_rfdetr: bool) -> tuple[list, list]:
+                             confidence: float, use_rfdetr: bool,
+                             debug: bool = False) -> tuple[list, list]:
     if use_rfdetr:
-        return detect_persons_vehicles_rfdetr(detector, img_bgr, confidence)
+        return detect_persons_vehicles_rfdetr(detector, img_bgr, confidence, debug=debug)
     return detect_persons_vehicles_yolo(detector, img_bgr, confidence)
+
+
+def detect_faces(net, img_bgr: np.ndarray,
+                 offset_x: int = 0, offset_y: int = 0,
+                 confidence: float = 0.5,
+                 debug: bool = False,
+                 debug_label: str = "") -> list[dict]:
+    h, w = img_bgr.shape[:2]
+    blob = cv2.dnn.blobFromImage(cv2.resize(img_bgr, (300, 300)), 1.0,
+                                  (300, 300), (104.0, 177.0, 123.0))
+    net.setInput(blob)
+    dets = net.forward()
+    out = []
+
+    if debug:
+        scores = sorted([float(dets[0, 0, i, 2]) for i in range(dets.shape[2])], reverse=True)
+        top3 = [f"{s:.3f}" for s in scores[:3]]
+        print(f"      [face-dnn] {debug_label} ({w}x{h}) top3={top3}")
+
+    for i in range(dets.shape[2]):
+        conf = float(dets[0, 0, i, 2])
+        if conf < confidence:
+            continue
+        x1 = int(dets[0, 0, i, 3] * w)
+        y1 = int(dets[0, 0, i, 4] * h)
+        x2 = int(dets[0, 0, i, 5] * w)
+        y2 = int(dets[0, 0, i, 6] * h)
+        fw, fh = x2 - x1, y2 - y1
+        if fw < 10 or fh < 10:
+            continue
+        # Reject detections that cover more than 60% of the crop — clearly not a face
+        if fw > w * 0.6 or fh > h * 0.6:
+            if debug:
+                print(f"      [face-dnn]   -> rejected oversized {fw}x{fh} in {w}x{h}")
+            continue
+        pad = int(fh * 0.4)
+        out.append({
+            "bbox": [offset_x + x1 - pad, offset_y + y1 - pad,
+                     fw + 2 * pad, fh + 2 * pad],
+            "confidence": round(conf, 3),
+            "source": "face",
+        })
+    return out
+
+
+def detect_faces_multiscale(net, img_bgr: np.ndarray,
+                             offset_x: int = 0, offset_y: int = 0,
+                             confidence: float = 0.35,
+                             debug: bool = False,
+                             debug_label: str = "") -> list[dict]:
+    """Run face DNN on full crop + horizontal strips + quadrants.
+
+    Large vehicle bboxes shrink the face to a tiny fraction of the 300x300
+    DNN input. Running on sub-regions keeps the face large enough to detect.
+    """
+    h, w = img_bgr.shape[:2]
+    regions: list[tuple[int, int, int, int]] = [(0, 0, w, h)]   # full crop
+
+    # Horizontal halves and thirds (catches cab vs cargo split)
+    if h >= 80:
+        mid = h // 2
+        regions += [(0, 0, w, mid), (0, mid, w, h - mid)]
+        if h >= 120:
+            t = h // 3
+            regions += [(0, 0, w, t), (0, t, w, t), (0, 2*t, w, h - 2*t)]
+
+    # Quadrants for wide crops
+    if w >= 80 and h >= 80:
+        mw, mh = w // 2, h // 2
+        regions += [
+            (0,  0,  mw, mh), (mw, 0,  w - mw, mh),
+            (0,  mh, mw, h - mh), (mw, mh, w - mw, h - mh),
+        ]
+
+    faces: list[dict] = []
+    for idx, (rx, ry, rw, rh) in enumerate(regions):
+        if rw < 30 or rh < 30:
+            continue
+        crop = img_bgr[ry:ry + rh, rx:rx + rw]
+        if crop.size == 0:
+            continue
+        region_label = f"{debug_label}[r{idx} +{rx},{ry}]" if debug_label else f"r{idx} +{rx},{ry}"
+        for f in detect_faces(net, crop, offset_x + rx, offset_y + ry, confidence,
+                              debug=debug, debug_label=region_label):
+            if not any(overlap_fraction(f["bbox"], e["bbox"]) > 0.5 for e in faces):
+                faces.append(f)
+    return faces
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +391,13 @@ def overlap_fraction(inner: list, outer: list) -> float:
 # Blurring
 # ---------------------------------------------------------------------------
 
+def windshield_region(vehicle_bbox: list) -> list:
+    """Upper 55% of vehicle bbox — covers windshield from any camera angle."""
+    x, y, w, h = vehicle_bbox
+    margin = int(w * 0.08)
+    return [x + margin, y, w - 2 * margin, int(h * 0.55)]
+
+
 def blur_region(img: np.ndarray, bbox: list, strength: int = 51) -> np.ndarray:
     x, y, w, h = bbox
     ih, iw = img.shape[:2]
@@ -283,14 +415,56 @@ def blur_region(img: np.ndarray, bbox: list, strength: int = 51) -> np.ndarray:
 # Core pipeline
 # ---------------------------------------------------------------------------
 
+def draw_debug(img_bgr: np.ndarray, persons: list, vehicles: list,
+               plate_dets: list) -> np.ndarray:
+    vis = img_bgr.copy()
+    for v in vehicles:
+        x, y, w, h = v["bbox"]
+        cv2.rectangle(vis, (x, y), (x+w, y+h), (255, 100, 0), 2)
+        cv2.putText(vis, f"vehicle {v['confidence']:.2f}", (x, y-4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 100, 0), 1)
+    for p in plate_dets:
+        x, y, w, h = p["bbox"]
+        label = p.get("plate") or f"{p['confidence']:.2f}"
+        cv2.rectangle(vis, (x, y), (x+w, y+h), (0, 200, 0), 2)
+        cv2.putText(vis, label, (x, y-4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1)
+    for p in persons:
+        x, y, w, h = p["bbox"]
+        src = p.get("source", "yolo")
+        if src == "windshield":
+            color, label = (0, 165, 255), "windshield"
+        elif src == "face":
+            color, label = (0, 200, 255), f"face {p['confidence']:.2f}"
+        else:
+            color, label = (0, 0, 255), f"person {p['confidence']:.2f}"
+        cv2.rectangle(vis, (x, y), (x+w, y+h), color, 2)
+        cv2.putText(vis, label, (x, y-4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+    return vis
+
+
 def process_image(img_bgr: np.ndarray, detector, plate_session, ocr,
+                  face_detector,
                   exempt_plate: str | None,
                   confidence_person: float,
                   confidence_plate: float,
-                  use_rfdetr: bool = False) -> tuple[np.ndarray, dict]:
+                  use_rfdetr: bool = False,
+                  windshield_fallback: bool = False,
+                  debug: bool = False) -> tuple[np.ndarray, dict]:
 
-    persons, vehicles = detect_persons_vehicles(detector, img_bgr, confidence_person, use_rfdetr)
+    persons, vehicles = detect_persons_vehicles(detector, img_bgr, confidence_person, use_rfdetr, debug=debug)
     plate_dets = detect_plates(plate_session, img_bgr, confidence_plate)
+
+    if debug:
+        n_yolo_persons  = len(persons)
+        n_yolo_vehicles = len(vehicles)
+        print(f"    [debug] YOLO/RF-DETR: {n_yolo_persons} person(s), {n_yolo_vehicles} vehicle(s), "
+              f"{len(plate_dets)} plate bbox(es)")
+        for v in vehicles:
+            print(f"    [debug]   vehicle conf={v['confidence']:.2f} bbox={v['bbox']}")
+        for p in persons:
+            print(f"    [debug]   person  conf={p['confidence']:.2f} bbox={p['bbox']}")
 
     # Read OCR for every detected plate bbox
     for det in plate_dets:
@@ -310,17 +484,87 @@ def process_image(img_bgr: np.ndarray, detector, plate_session, ocr,
         if best_vehicle is not None:
             best_vehicle["plates"].append(det["plate"])
 
-    # Find exempt vehicle (the one whose plate matches --exempt-plate)
+    # Resolve exempt vehicle now so face detection can skip it
     exempt_vehicle = None
+    exempt_normalized = None
     if exempt_plate:
-        target = re.sub(r'[\-\s]', '', exempt_plate).upper()
+        exempt_normalized = re.sub(r'[\-\s]', '', exempt_plate).upper()
         for vehicle in vehicles:
             for p in vehicle["plates"]:
-                if re.sub(r'[\-\s]', '', p).upper() == target:
+                if re.sub(r'[\-\s]', '', p).upper() == exempt_normalized:
                     exempt_vehicle = vehicle
                     break
 
-    # Blur persons — skip those overlapping significantly with the exempt vehicle
+    # Face detection fallback
+    if face_detector is not None:
+        ih, iw = img_bgr.shape[:2]
+
+        # Pass 1: face DNN on every vehicle crop except the exempt vehicle.
+        # Runs regardless of whether YOLO already found a person (catches passengers).
+        vehicles_without_person = []
+        for vehicle in vehicles:
+            if vehicle is exempt_vehicle:
+                continue
+            vx, vy, vw, vh = vehicle["bbox"]
+            x1, y1 = max(0, vx), max(0, vy)
+            x2, y2 = min(iw, vx + vw), min(ih, vy + vh)
+            crop = img_bgr[y1:y2, x1:x2]
+            if (x2 - x1) >= 40 and (y2 - y1) >= 40 and crop.size > 0:
+                if debug:
+                    print(f"    [debug]   Pass1 face DNN on vehicle {vehicle['bbox']}:")
+                found = detect_faces_multiscale(face_detector, crop,
+                                               offset_x=x1, offset_y=y1,
+                                               debug=debug,
+                                               debug_label=f"veh{vehicle['bbox']}")
+                # Deduplicate against already-found persons
+                for f in found:
+                    if not any(overlap_fraction(f["bbox"], p["bbox"]) > 0.5
+                               for p in persons):
+                        persons.append(f)
+                if debug:
+                    print(f"    [debug]   -> {len(found)} face(s) above threshold")
+            has_person = any(overlap_fraction(p["bbox"], vehicle["bbox"]) > 0.3
+                             for p in persons)
+            if not has_person:
+                vehicles_without_person.append(vehicle)
+
+        # Pass 2: face DNN on full image to catch pedestrians outside vehicle bboxes
+        if debug:
+            print(f"    [debug]   Pass2 face DNN on full image:")
+        full_faces = detect_faces_multiscale(face_detector, img_bgr,
+                                             debug=debug, debug_label="full")
+        for f in full_faces:
+            inside_any_vehicle = any(
+                overlap_fraction(f["bbox"], v["bbox"]) > 0.3 for v in vehicles
+            )
+            already_covered = any(
+                overlap_fraction(f["bbox"], p["bbox"]) > 0.5 for p in persons
+            )
+            if not inside_any_vehicle and not already_covered:
+                if debug:
+                    print(f"    [debug]   face DNN pedestrian: {f['bbox']} conf={f['confidence']}")
+                persons.append(f)
+
+        # Pass 3: windshield heuristic (opt-in via --windshield-fallback)
+        if windshield_fallback:
+            for vehicle in vehicles_without_person:
+                if vehicle is exempt_vehicle:
+                    continue
+                has_person_now = any(
+                    overlap_fraction(p["bbox"], vehicle["bbox"]) > 0.3 for p in persons
+                )
+                if not has_person_now:
+                    ws = windshield_region(vehicle["bbox"])
+                    if debug:
+                        print(f"    [debug]   windshield heuristic for vehicle "
+                              f"bbox={vehicle['bbox']} -> blur {ws}")
+                    persons.append({"bbox": ws, "confidence": 1.0, "source": "windshield"})
+
+    if debug:
+        print(f"    [debug] total persons to blur: {len(persons)} "
+              f"({len(persons) - n_yolo_persons} from face/windshield fallback)")
+
+    # Blur persons — skip those overlapping with the exempt vehicle
     result = img_bgr.copy()
     blurred_count = 0
     for person in persons:
@@ -329,13 +573,26 @@ def process_image(img_bgr: np.ndarray, detector, plate_session, ocr,
         result = blur_region(result, person["bbox"])
         blurred_count += 1
 
+    # Blur license plates — skip only the exempt plate (if specified)
+    plates_blurred = 0
+    for det in plate_dets:
+        if exempt_normalized and det.get("plate"):
+            if re.sub(r'[\-\s]', '', det["plate"]).upper() == exempt_normalized:
+                continue
+        result = blur_region(result, det["bbox"])
+        plates_blurred += 1
+
     info = {
-        "persons_detected":   len(persons),
-        "persons_blurred":    blurred_count,
-        "vehicles_detected":  len(vehicles),
-        "plates_found":       [d["plate"] for d in plate_dets if d["plate"]],
-        "exempt_plate":       exempt_plate,
+        "persons_detected":    len(persons),
+        "persons_blurred":     blurred_count,
+        "vehicles_detected":   len(vehicles),
+        "plates_found":        [d["plate"] for d in plate_dets if d["plate"]],
+        "plates_blurred":      plates_blurred,
+        "exempt_plate":        exempt_plate,
         "exempt_vehicle_found": exempt_vehicle is not None,
+        "_persons":            persons,
+        "_vehicles":           vehicles,
+        "_plate_dets":         plate_dets,
     }
     return result, info
 
@@ -347,8 +604,16 @@ def process_image(img_bgr: np.ndarray, detector, plate_session, ocr,
 def collect_images(path: Path) -> list[Path]:
     if path.is_file():
         return [path]
-    exts = {"*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"}
-    return sorted(p for ext in exts for p in path.glob(ext))
+    exts = {"*.jpg", "*.jpeg", "*.png"}
+    seen = set()
+    result = []
+    for ext in exts:
+        for p in path.glob(ext):
+            key = p.resolve()
+            if key not in seen:
+                seen.add(key)
+                result.append(p)
+    return sorted(result)
 
 
 def main():
@@ -364,12 +629,16 @@ def main():
                         help="Person/vehicle detector: yolo (default) or rfdetr")
     parser.add_argument("--rfdetr-large",    action="store_true",
                         help="Use RFDETRLarge instead of RFDETRBase (rfdetr only)")
-    parser.add_argument("--confidence-person", type=float, default=0.4,
-                        help="Person/vehicle confidence threshold (default: 0.4)")
+    parser.add_argument("--confidence-person", type=float, default=0.3,
+                        help="Person/vehicle confidence threshold (default: 0.3)")
     parser.add_argument("--confidence-plate",  type=float, default=0.3,
                         help="Plate detector confidence (default: 0.3)")
     parser.add_argument("--plate-model",     default=None,
                         help="Path to local plate ONNX model (skips HF download)")
+    parser.add_argument("--windshield-fallback", action="store_true",
+                        help="Blur upper vehicle area when no person or face is detected (conservative)")
+    parser.add_argument("--debug",           action="store_true",
+                        help="Print per-image detection counts and save debug images")
     args = parser.parse_args()
 
     output_dir = Path(args.output)
@@ -382,6 +651,7 @@ def main():
     plate_session = load_plate_session(model_path)
     detector      = load_rfdetr(args.rfdetr_large) if use_rfdetr else load_yolo()
     ocr           = load_ocr()
+    face_detector  = load_face_detector()
     print()
 
     if args.exempt_plate:
@@ -401,23 +671,39 @@ def main():
             print(f"  [skip] {img_path.name}")
             continue
 
+        if args.debug:
+            print(f"  {img_path.name}:")
+
         result_img, info = process_image(
             img, detector, plate_session, ocr,
+            face_detector=face_detector,
             exempt_plate=args.exempt_plate,
             confidence_person=args.confidence_person,
             confidence_plate=args.confidence_plate,
             use_rfdetr=use_rfdetr,
+            windshield_fallback=args.windshield_fallback,
+            debug=args.debug,
         )
 
         plates_str = ", ".join(info["plates_found"]) or "none"
-        exempt_str = " (driver exempt)" if info["exempt_vehicle_found"] else ""
+        exempt_str = f"  exempt={args.exempt_plate}" if info["exempt_vehicle_found"] else ""
         print(f"  {img_path.name}: "
               f"{info['persons_blurred']}/{info['persons_detected']} persons blurred  "
+              f"{info['plates_blurred']} plate(s) blurred  "
               f"plates=[{plates_str}]{exempt_str}")
+
+        if args.debug:
+            # Save a side-by-side debug image showing all raw detections
+            debug_img = draw_debug(img, info.get("_persons", []),
+                                   info.get("_vehicles", []), info.get("_plate_dets", []))
+            stem = img_path.stem
+            cv2.imwrite(str(output_dir / f"{stem}_debug.jpg"), debug_img,
+                        [cv2.IMWRITE_JPEG_QUALITY, 90])
 
         cv2.imwrite(str(output_dir / img_path.name), result_img,
                     [cv2.IMWRITE_JPEG_QUALITY, 92])
-        all_results.append({"file": img_path.name, **info})
+        public_info = {k: v for k, v in info.items() if not k.startswith("_")}
+        all_results.append({"file": img_path.name, **public_info})
 
     (output_dir / "blur_results.json").write_text(
         json.dumps(all_results, indent=2, ensure_ascii=False),

@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 output/
+blurred/
+fotos/
 *.pth
 *.onnx
+*.pt
 .env
