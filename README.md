@@ -1,3 +1,5 @@
+Hier is de volledige inhoud voor `README.md`. Kopieer de tekst en sla hem op als `README.md` in de hoofdmap van je repository.
+
 ```markdown
 # Dutch License Plate Detector & Privacy Blurrer
 
@@ -215,4 +217,4 @@ Apache 2.0 License – free for personal and commercial use; see the [LICENSE](L
 - [Ultralytics YOLO](https://github.com/ultralytics/ultralytics)
 ```
 
-**Opmerking:** Vergeet niet het `LICENSE`-bestand met de volledige Apache 2.0-tekst aan je repository toe te voegen. De badge en de verwijzing in de README gaan er dan van uit dat dat bestand bestaat.
+Gebruik de bovenstaande tekst om `README.md` te maken. Vergeet niet ook het `LICENSE`-bestand met de volledige Apache 2.0-tekst toe te voegen.
