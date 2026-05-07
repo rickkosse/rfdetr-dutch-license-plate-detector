@@ -1,5 +1,3 @@
-Hier is de volledige inhoud voor `README.md`. Kopieer de tekst en sla hem op als `README.md` in de hoofdmap van je repository.
-
 ```markdown
 # Dutch License Plate Detector & Privacy Blurrer
 
