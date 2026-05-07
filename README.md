@@ -1,4 +1,3 @@
-```markdown
 # Dutch License Plate Detector & Privacy Blurrer
 
 Two Python scripts for **Dutch license plate detection**, **OCR**, and **privacy blurring** (persons + plates).  
