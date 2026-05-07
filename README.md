@@ -1,5 +1,3 @@
-Hier is de volledige README.md met **Apache 2.0-licentie**, gebaseerd op de eerdere verbeteringen.
-
 ```markdown
 # Dutch License Plate Detector & Privacy Blurrer
 
