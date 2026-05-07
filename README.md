@@ -1,19 +1,32 @@
-# Dutch License Plate Detector
+Hier is de volledige README.md met **Apache 2.0-licentie**, gebaseerd op de eerdere verbeteringen.
 
-Two scripts for Dutch license plate detection, OCR and privacy blurring.  
-Models download automatically from HuggingFace and Ultralytics on first run — no manual setup needed.
+```markdown
+# Dutch License Plate Detector & Privacy Blurrer
 
-## Install
+Two Python scripts for **Dutch license plate detection**, **OCR**, and **privacy blurring** (persons + plates).  
+Models are downloaded automatically from HuggingFace and Ultralytics on first run – no manual setup required.
+
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
+## 📦 Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
+> ℹ️ The first time you run a script, required models are downloaded automatically:
+> - **RF-DETR** plate detector (from HuggingFace)
+> - **fast-plate-ocr** model (from HuggingFace)
+> - **YOLO11n** or **RF-DETR** (person/vehicle detection, depending on your flags)
+
 ---
 
-## `detect.py` — Plate detection + OCR
+## 🚗 `detect.py` – Plate detection + OCR
 
-Finds and reads license plates in images.
+Find and read license plates in images.
+
+### Basic usage
 
 ```bash
 # Single image
@@ -21,26 +34,30 @@ python detect.py --images photo.jpg
 
 # Folder of images
 python detect.py --images ./photos
-
-# Custom output folder and confidence threshold
-python detect.py --images ./photos --output ./results --confidence 0.4
-
-# JSON only, no annotated images
-python detect.py --images ./photos --no-visualize
-
-# Use a local ONNX model (skip HF download)
-python detect.py --images ./photos --model ./inference_model.onnx
 ```
 
-### Example output
+### Options
 
-| Single plate | Multi-vehicle |
-|---|---|
-| ![single plate](examples/detect_single.jpg) | ![multi-vehicle](examples/detect_result.png) |
+| Flag | Description |
+|------|-------------|
+| `--images` | Path to an image or folder (required) |
+| `--output` | Output directory (default: `./output`) |
+| `--confidence` | Confidence threshold for plate detection (default: `0.4`) |
+| `--no-visualize` | Save JSON results only, skip annotated images |
+| `--model` | Path to a local ONNX model (skip HuggingFace download) |
 
-### JSON output
+### Example
 
-Annotated images and a `results.json` are saved to `./output/` (or `--output`).
+```bash
+python detect.py --images ./photos --output ./results --confidence 0.4 --no-visualize
+```
+
+### Output
+
+- **Annotated images** (unless `--no-visualize` is used)  
+- **`results.json`** – detection data in the output folder
+
+#### JSON structure
 
 ```json
 [
@@ -53,7 +70,7 @@ Annotated images and a `results.json` are saved to `./output/` (or `--output`).
 ]
 ```
 
-Terminal:
+#### Console output example
 
 ```
 Processing 3 image(s)...
@@ -68,69 +85,59 @@ With plate: 2  (67%)
 Avg speed : 1367 ms/image
 ```
 
+| Single plate | Multi-vehicle |
+|--------------|---------------|
+| ![single plate](examples/detect_single.jpg) | ![multi vehicle](examples/detect_result.png) |
+
 ---
 
-## `blur.py` — Privacy blurring
+## 🔒 `blur.py` – Privacy blurring
 
-Detects persons, vehicles and license plates. Blurs all persons and plates by default.  
-Optionally exempt the driver of a specific vehicle from blurring.
+Detect **persons**, **vehicles**, and **license plates** – then blur all persons and plates.  
+Optionally, exempt the driver of a specific vehicle from blurring.
+
+### Basic usage
 
 ```bash
 # Blur all persons and plates (YOLO, default)
 python blur.py --images ./photos
 
-# Use RF-DETR for better person/vehicle detection (recommended)
+# Better person/vehicle detection (recommended)
 python blur.py --images ./photos --detector rfdetr
 
-# Exempt the driver of a specific plate from blurring
+# Exempt the driver of a specific plate
 python blur.py --images ./photos --detector rfdetr --exempt-plate OL70ZL
-
-# Single image with exempt plate
-python blur.py --images photo.jpg --output ./blurred --exempt-plate JKB18V
-
-# RF-DETR Large (more accurate, slower)
-python blur.py --images ./photos --detector rfdetr --rfdetr-large
-
-# Adjust confidence thresholds
-python blur.py --images ./photos --confidence-person 0.5 --confidence-plate 0.4
-
-# Debug mode: shows detection boxes and saves debug images
-python blur.py --images ./photos --debug
-
-# Windshield fallback for aerial/overhead shots without visible faces
-python blur.py --images ./photos --windshield-fallback
-
-# Use a local plate ONNX model (skip HF download)
-python blur.py --images ./photos --plate-model ./inference_model.onnx
 ```
 
-### Example output
+### Options
 
-**Original:**
+| Flag | Description |
+|------|-------------|
+| `--images` | Path to an image or folder (required) |
+| `--output` | Output directory (default: `./blurred`) |
+| `--detector` | Person/vehicle detector: `yolo` (default) or `rfdetr` |
+| `--rfdetr-large` | Use RF-DETR Large (more accurate, slower) |
+| `--exempt-plate` | Do not blur persons associated with this plate (e.g., driver) |
+| `--confidence-person` | Confidence threshold for person detection (default: `0.5`) |
+| `--confidence-plate` | Confidence threshold for plate detection (default: `0.4`) |
+| `--debug` | Show detection boxes; saves debug images in output folder |
+| `--windshield-fallback` | For aerial/overhead shots: fallback to blurring windshield area when no face is visible |
+| `--plate-model` | Path to a local plate detection ONNX model (skip HuggingFace download) |
 
-![original](examples/blur_original.png)
+### Detector comparison
 
-**Detections (debug view — vehicles in blue, persons in red, plates in green):**
+| Detector | Speed | Accuracy | When to use |
+|----------|-------|----------|-------------|
+| `yolo` (default) | ⚡ Fast | ✅ Good | Standard scenes, good lighting |
+| `rfdetr` | 🐢 Slower | ⭐ Higher | Partially visible persons, angled shots |
+| `rfdetr --rfdetr-large` | 🐌 Slowest | 🌟 Best | Maximum accuracy, offline processing |
 
-![debug](examples/blur_debug.jpg)
+### Output
 
-**Result — all persons and plates blurred:**
+- **Blurred images** saved to output folder  
+- **`blur_results.json`** – detailed detection and blurring statistics
 
-![result](examples/blur_result.png)
-
-### Detector options
-
-| Flag | Model | Speed | Accuracy |
-|---|---|---|---|
-| *(default)* | YOLO11n | Fast | Good |
-| `--detector rfdetr` | RF-DETR Base (COCO) | Slower | Higher |
-| `--detector rfdetr --rfdetr-large` | RF-DETR Large (COCO) | Slowest | Best |
-
-RF-DETR is recommended when persons are partially visible or photographed from an angle.
-
-### JSON output
-
-Blurred images and a `blur_results.json` are saved to `./blurred/` (or `--output`).
+#### JSON structure
 
 ```json
 [
@@ -141,37 +148,73 @@ Blurred images and a `blur_results.json` are saved to `./blurred/` (or `--output
     "vehicles_detected": 3,
     "plates_found": ["OL70ZL", "G361RX", "JN231Z"],
     "plates_blurred": 3,
-    "exempt_plate": null,
-    "exempt_vehicle_found": false
+    "exempt_plate": "OL70ZL",
+    "exempt_vehicle_found": true
   }
 ]
 ```
 
+#### Visual examples
+
+| Original | Debug (boxes) | Result (blurred) |
+|----------|---------------|------------------|
+| ![original](examples/blur_original.png) | ![debug](examples/blur_debug.jpg) | ![result](examples/blur_result.png) |
+
+> **Debug mode** (`--debug`) shows:  
+> 🔵 Blue boxes = vehicles &nbsp;|&nbsp; 🔴 Red boxes = persons &nbsp;|&nbsp; 🟢 Green boxes = plates
+
 ---
 
-## How it works
+## ⚙️ How it works
 
 ### Plate detection (`detect.py` + `blur.py`)
-1. **RF-DETR Base** (ONNX, 560×560) — finds plate bounding boxes
-2. **Geometry filter** — rejects boxes with wrong aspect ratio (< 1.5 or > 9.0) or too large (> 15% of image)
-3. **fast-plate-ocr** (`european-plates-mobile-vit-v2-model`) — reads plate text
-4. **Format validation** — regex check against all Dutch sidecodes (1–14), agricultural, diplomatic and moped formats
+
+1. **RF-DETR Base (ONNX, 560×560)** – finds plate bounding boxes  
+2. **Geometry filter** – rejects invalid boxes (aspect ratio <1.5 or >9.0, area >15% of image)  
+3. **fast-plate-ocr** (`european-plates-mobile-vit-v2-model`) – reads plate text  
+4. **Format validation** – regex check against all Dutch sidecodes (1–14), agricultural, diplomatic and moped formats
 
 ### Privacy blurring (`blur.py`)
-1. **Person/vehicle detection** — YOLO11n or RF-DETR (COCO 80 classes)
-2. **Face fallback** — OpenCV DNN SSD ResNet10 runs multiscale on each vehicle crop and the full image to catch persons the main detector missed
-3. **Plate association** — each detected plate is linked to the vehicle bbox it overlaps most
-4. **Exempt logic** — if `--exempt-plate` is set, persons overlapping the matched vehicle are not blurred
-5. **Plate blurring** — all detected plate bboxes are blurred; only the exempt plate is skipped
-6. **Gaussian blur** — applied to all non-exempt persons and plates
+
+1. **Person/vehicle detection** – YOLO11n or RF-DETR (COCO 80 classes)  
+2. **Face fallback** – OpenCV DNN SSD ResNet10 runs multiscale on vehicle crops + full image to catch missed persons  
+3. **Plate association** – each plate is linked to the vehicle bbox with highest overlap  
+4. **Exempt logic** – if `--exempt-plate` is set, persons overlapping that vehicle are *not* blurred  
+5. **Plate blurring** – all non‑exempt plates are blurred  
+6. **Gaussian blur** – applied to all non‑exempt persons and plates
 
 ---
 
-## Model
+## 📁 Model sources
 
-Plate detector hosted on HuggingFace: [Rickkosse/rfdetr_licences_plate_detector](https://huggingface.co/Rickkosse/rfdetr_licences_plate_detector)
+| Model | Source |
+|-------|--------|
+| Plate detector (RF-DETR) | [Rickkosse/rfdetr_licences_plate_detector](https://huggingface.co/Rickkosse/rfdetr_licences_plate_detector) – trained on synthetic plates + BDD100K |
+| OCR | [fast-plate-ocr](https://huggingface.co/xonrix/fast-plate-ocr) – `european-plates-mobile-vit-v2-model` |
+| Person/vehicle detector | Ultralytics YOLO11n or HuggingFace RF-DETR (COCO) |
 
-- Architecture: RF-DETR Base, 1 class (`license_plate`)
-- Resolution: 560×560
-- Training: synthetic plates on BDD100K + real-world crops
-- EMA checkpoint, cosine LR schedule
+---
+
+## ❓ Troubleshooting
+
+- **First run downloads models** – ensure you have a working internet connection.  
+- **No plates found** – try lowering `--confidence` (e.g., `0.3`).  
+- **Slow performance with RF-DETR** – use `--detector yolo` for speed, or add `--rfdetr-large` only if needed.  
+- **Exempt driver not working** – verify that the plate is correctly detected and associated with a vehicle (use `--debug` to inspect overlaps).  
+
+---
+
+## 📄 License
+
+Apache 2.0 License – free for personal and commercial use; see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Acknowledgements
+
+- [RF-DETR](https://github.com/roboflow/rfdetr) by Roboflow  
+- [fast-plate-ocr](https://github.com/xonrix/fast-plate-ocr)  
+- [Ultralytics YOLO](https://github.com/ultralytics/ultralytics)
+```
+
+**Opmerking:** Vergeet niet het `LICENSE`-bestand met de volledige Apache 2.0-tekst aan je repository toe te voegen. De badge en de verwijzing in de README gaan er dan van uit dat dat bestand bestaat.
